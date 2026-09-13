@@ -34,6 +34,15 @@
     </div>
     
     <div class="sidebar-section">
+      <h2>VOCAB MODE</h2>
+      <div style="display: flex; gap: 5px; margin-top: 10px; margin-bottom: 25px;">
+        <button id="mode-simple" class="btn-secondary" onclick="setVocabMode('simple')" style="flex:1; padding:8px 0; font-size:0.8rem;">SIMPLE</button>
+        <button id="mode-normal" class="btn-primary" onclick="setVocabMode('normal')" style="flex:1; padding:8px 0; font-size:0.8rem;">NORMAL</button>
+        <button id="mode-tuff" class="btn-secondary" onclick="setVocabMode('tuff')" style="flex:1; padding:8px 0; font-size:0.8rem;">TUFF</button>
+      </div>
+    </div>
+
+    <div class="sidebar-section">
       <h2>CIPHER PROTOCOL</h2>
       <div class="control-group">
         <button id="cipher-toggle" class="btn-secondary" onclick="toggleCipher()" style="font-size:1.2rem; font-family: var(--font-glitch); letter-spacing:2px; padding: 12px;">OFF</button>
@@ -89,7 +98,16 @@
       
       <div class="beat-controls" style="display: flex; gap: 10px; align-items: center; background: rgba(255,255,255,0.05); padding: 5px 15px; border: 1px solid var(--border-color);">
         <label style="font-size: 0.8rem; color: var(--text-muted);">BPM</label>
-        <input type="number" id="bpm-input" value="142" style="width: 50px; background: transparent; color: var(--accent); font-weight:bold; font-family:var(--font-main);">
+        <input type="number" id="bpm-input" value="142" style="width: 50px; background: transparent; color: var(--accent); font-weight:bold; font-family:var(--font-main); border:none; outline:none;">
+        
+        <label style="font-size: 0.8rem; color: var(--text-muted); margin-left: 5px;">TIME</label>
+        <select id="bar-speed-input" style="background: transparent; color: var(--accent); font-weight:bold; font-family:var(--font-main); border: none; outline: none; cursor: pointer;">
+          <option value="0.5" style="background: #111; color: #fff;">½ Bar</option>
+          <option value="1" style="background: #111; color: #fff;">1 Bar</option>
+          <option value="2" selected style="background: #111; color: #fff;">2 Bars</option>
+          <option value="4" style="background: #111; color: #fff;">4 Bars</option>
+        </select>
+
         <button id="beat-btn" class="btn-primary" onclick="toggleBeat()" style="padding: 5px 15px; clip-path: none; letter-spacing: 1px;">BEAT</button>
         <button id="auto-roll-btn" class="btn-primary" onclick="toggleAutoRoll()" style="padding: 5px 15px; clip-path: none; letter-spacing: 1px;">AUTO-ROLL</button>
       </div>
@@ -104,11 +122,13 @@
 
   <!-- RHYME PAD -->
   <aside id="rhyme-pad" class="rhyme-pad">
-    <div class="pad-header">
-      <h2>RHYME PAD</h2>
-      <button class="pad-close" onclick="document.getElementById('rhyme-pad').classList.remove('open')">&times;</button>
+    <div class="pad-content-wrapper">
+      <div class="pad-header">
+        <h2>RHYME PAD</h2>
+        <button class="pad-close" onclick="document.getElementById('rhyme-pad').classList.remove('open')">&times;</button>
+      </div>
+      <div class="pad-body" contenteditable="true" spellcheck="false" placeholder="Drag rhymes here or type...&#10;&#10;e.g.&#10;I got the WEALTH&#10;And the STEALTH"></div>
     </div>
-    <div class="pad-body" contenteditable="true" spellcheck="false" placeholder="Drag rhymes here or type...&#10;&#10;e.g.&#10;I got the WEALTH&#10;And the STEALTH"></div>
   </aside>
 
   <!-- DICTIONARY MODAL -->

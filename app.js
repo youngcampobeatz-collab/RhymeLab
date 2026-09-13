@@ -244,7 +244,7 @@ async function updateAnchor(index, word) {
             
             if (isExact || isGoodSlant || isTrapDict) {
               if (!combinedRhymes.has(clean)) {
-                combinedRhymes.set(clean, { word: clean, syllables: d.numSyllables || 0, score: d.score || 0 });
+                combinedRhymes.set(clean, { word: clean, syllables: d.numSyllables || 0, score: d.score || 0, freq: freq, isTrap: isTrapDict });
               }
             }
           }
@@ -257,11 +257,13 @@ async function updateAnchor(index, word) {
     await fetchDatamuse(apiWord, 'rel_rhy');
   } else if (strictness === 'close') {
     await fetchDatamuse(apiWord, 'rel_rhy');
-    await fetchDatamuse(apiWord, 'rel_nry'); // ALWAYS fetch slant to catch polysyllabic assonance
+    await fetchDatamuse(apiWord, 'rel_nry');
   } else if (strictness === 'slant') {
+    await fetchDatamuse(apiWord, 'rel_rhy');
     await fetchDatamuse(apiWord, 'rel_nry');
     if (combinedRhymes.size < 15) await fetchDatamuse(apiWord, 'sl');
   } else if (strictness === 'experimental') {
+    await fetchDatamuse(apiWord, 'rel_rhy');
     await fetchDatamuse(apiWord, 'rel_nry');
     await fetchDatamuse(apiWord, 'sl');
   }
@@ -269,7 +271,7 @@ async function updateAnchor(index, word) {
   if (combinedRhymes.size < 10) {
     await fetchDatamuse(apiWord, 'rel_rhy'); 
     if (combinedRhymes.size < 10) await fetchDatamuse(apiWord, 'rel_nry');
-    if (combinedRhymes.size < 10) await fetchDatamuse(apiWord, 'sl');
+    if (combinedRhymes.size < 10 && (strictness === 'slant' || strictness === 'experimental')) await fetchDatamuse(apiWord, 'sl');
   }
   
   let finalRhymes = Array.from(combinedRhymes.values());
@@ -279,7 +281,7 @@ async function updateAnchor(index, word) {
     dictionary.forEach(w => {
       if (w !== apiWord && w !== word.toLowerCase() && w.endsWith(vowelSuffix)) {
         if (!combinedRhymes.has(w)) {
-           finalRhymes.push({ word: w, syllables: 0, score: 0 });
+           finalRhymes.push({ word: w, syllables: 0, score: 0, freq: 0, isTrap: true });
            combinedRhymes.set(w, true);
         }
       }
@@ -304,7 +306,7 @@ async function updateAnchor(index, word) {
             }
             if ((d.score && d.score >= 200 && freq >= 0.5) || dictionary.includes(clean)) {
               if (!combinedRhymes.has(clean)) {
-                finalRhymes.push({ word: clean, syllables: d.numSyllables || 0, score: d.score || 0 });
+                finalRhymes.push({ word: clean, syllables: d.numSyllables || 0, score: d.score || 0, freq: freq, isTrap: dictionary.includes(clean) });
                 combinedRhymes.set(clean, true);
               }
             }
@@ -322,6 +324,17 @@ async function updateAnchor(index, word) {
           let diffB = Math.abs(b.syllables - anchorSyllables);
           if (diffA !== diffB) return diffA - diffB;
       }
+      
+      if (vocabMode === 'simple') {
+          return (b.freq || 0) - (a.freq || 0);
+      } else if (vocabMode === 'tuff') {
+          if (a.isTrap && !b.isTrap) return -1;
+          if (!a.isTrap && b.isTrap) return 1;
+          let scoreA = (a.isTrap ? 100 : 0) - (a.freq || 0) + (a.word.length * 2);
+          let scoreB = (b.isTrap ? 100 : 0) - (b.freq || 0) + (b.word.length * 2);
+          return scoreB - scoreA;
+      }
+      
       return 0.5 - Math.random(); // shuffle within same-distance tier
   });
   
@@ -402,6 +415,21 @@ let beatInterval = null;
 let currentAnchorBeat = 0;
 let activeBeatIndex = -1;
 let isBeatOn = false;
+
+let vocabMode = 'normal';
+
+function setVocabMode(mode) {
+  const isDiff = vocabMode !== mode;
+  vocabMode = mode;
+  document.getElementById('mode-simple').className = mode === 'simple' ? 'btn-primary' : 'btn-secondary';
+  document.getElementById('mode-normal').className = mode === 'normal' ? 'btn-primary' : 'btn-secondary';
+  document.getElementById('mode-tuff').className = mode === 'tuff' ? 'btn-primary' : 'btn-secondary';
+  
+  if (isDiff) {
+    randomizeBoard();
+  }
+}
+
 let isAutoRollOn = false;
 
 function toggleAutoRoll() {
@@ -433,7 +461,11 @@ function toggleBeat() {
 function startBeat() {
   stopBeat();
   const bpm = parseInt(document.getElementById('bpm-input').value) || 142;
-  const msPerBeat = (120 / bpm) * 1000;
+  const bars = parseFloat(document.getElementById('bar-speed-input').value) || 2;
+  
+  // 1 beat = 60000 / bpm ms. 1 bar = 4 beats. 
+  const beatsPerSwitch = bars * 4;
+  const msPerSwitch = (60000 / bpm) * beatsPerSwitch;
   
   currentAnchorBeat = 0;
   activeBeatIndex = -1;
@@ -459,7 +491,7 @@ function startBeat() {
       currentAnchorBeat = 0;
       hasCompletedCycle = true;
     }
-  }, msPerBeat);
+  }, msPerSwitch);
 }
 
 function stopBeat() {
