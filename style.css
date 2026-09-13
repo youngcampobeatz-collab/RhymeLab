@@ -662,11 +662,11 @@ input {
     z-index: 1000;
     transition: right 0.3s ease;
   }
-  .pad-content-wrapper {
-    width: 100vw;
+  .rhyme-pad.open {
+    right: 0 !important;
+    width: 100vw !important;
   }
-}
-
-.rhyme-pad.open {
-  right: 0 !important;
+  .pad-content-wrapper {
+    width: 100vw !important;
+  }
 }
