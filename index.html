@@ -35,11 +35,12 @@
     
     <div class="sidebar-section">
       <h2>VOCAB MODE</h2>
-      <div style="display: flex; gap: 5px; margin-top: 10px; margin-bottom: 25px;">
+      <div id="vocab-container" style="display: flex; gap: 5px; margin-top: 10px; margin-bottom: 10px; transition: 0.3s;">
         <button id="mode-simple" class="btn-secondary" onclick="setVocabMode('simple')" style="flex:1; padding:8px 0; font-size:0.8rem;">SIMPLE</button>
         <button id="mode-normal" class="btn-primary" onclick="setVocabMode('normal')" style="flex:1; padding:8px 0; font-size:0.8rem;">NORMAL</button>
         <button id="mode-tuff" class="btn-secondary" onclick="setVocabMode('tuff')" style="flex:1; padding:8px 0; font-size:0.8rem;">TUFF</button>
       </div>
+      <button id="mode-mixed" class="btn-secondary" onclick="toggleMixedMode()" style="width:100%; padding:8px 0; margin-bottom: 20px; font-size:0.9rem; font-family: var(--font-glitch); letter-spacing: 2px;">MIXED MODE</button>
     </div>
 
     <div class="sidebar-section">

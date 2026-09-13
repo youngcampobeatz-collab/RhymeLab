@@ -220,9 +220,12 @@ async function updateAnchor(index, word) {
   renderBoard();
   
   let combinedRhymes = new Map();
-  const rawWords = word.trim().split(/[\s-]+/);
+  const cleanAnchor = word.trim().replace(/^[\s\-]+|[\s\-]+$/g, '');
+  if (!cleanAnchor) return;
+  const rawWords = cleanAnchor.split(/[\s\-]+/);
   const isMulti = rawWords.length > 1;
   const apiWord = rawWords[rawWords.length - 1].toLowerCase();
+    
     let anchorSyllables = 0;
     let applySyllableLock = isSyllableLocked;
     
@@ -238,14 +241,14 @@ async function updateAnchor(index, word) {
     }
 
   async function fetchDatamuse(queryWord, param) {
-    let url = `https://api.datamuse.com/words?${param}=${queryWord}&md=f,s&max=40`;
+    let url = `https://api.datamuse.com/words?${param}=${queryWord}&md=f,s&max=100`;
     try {
       const res = await fetch(url);
       const data = await res.json();
       if (data && data.length > 0) {
         data.forEach(d => {
           const clean = d.word.toLowerCase();
-          if (/^[a-z][a-z\-\']{2,}$/.test(clean) && clean !== word.toLowerCase() && clean !== apiWord) {
+          if (/^[a-z][a-z\-\'\s]{2,}$/.test(clean) && clean !== word.toLowerCase() && clean !== apiWord) {
             if (applySyllableLock && anchorSyllables > 0 && d.numSyllables !== anchorSyllables) return;
             
             let freq = 0;
@@ -257,14 +260,15 @@ async function updateAnchor(index, word) {
             let minFreq = 0.5;
               if (strictness === 'slant') minFreq = 0.1;
               if (strictness === 'experimental') minFreq = 0.1;
+              if (isMixedMode) minFreq = 0.1;
               
               let isExact = (d.score && d.score >= 250);
-              let isTrapDict = dictionary.includes(clean);
+              let isTrapDict = dictionary.includes(clean) || clean.includes(' ');
               
               let requiredFreq = isTrapDict ? minFreq : 1.0;
-              let isGoodSlant = (d.score && d.score >= 80 && freq >= requiredFreq);
+              let isGoodSlant = (d.score && d.score >= 60 && freq >= requiredFreq);
               
-              if (isExact || isGoodSlant || isTrapDict) {
+              if (isExact || isGoodSlant) {
               if (!combinedRhymes.has(clean)) {
                 combinedRhymes.set(clean, { word: clean, syllables: d.numSyllables || 0, score: d.score || 0, freq: freq, isTrap: isTrapDict });
               }
@@ -275,7 +279,11 @@ async function updateAnchor(index, word) {
     } catch (err) {}
   }
 
-  if (strictness === 'exact') {
+  if (isMixedMode) {
+    await fetchDatamuse(apiWord, 'rel_rhy');
+    await fetchDatamuse(apiWord, 'rel_nry');
+    await fetchDatamuse(apiWord, 'sl');
+  } else if (strictness === 'exact') {
     await fetchDatamuse(apiWord, 'rel_rhy');
   } else if (strictness === 'close') {
     await fetchDatamuse(apiWord, 'rel_rhy');
@@ -294,24 +302,30 @@ async function updateAnchor(index, word) {
     }
 
     // Intelligent Phonetic Bridge for Slang / Typos
-    // If a word yields ZERO rhymes (like 'DAWG' or 'NIFFTY'), Datamuse doesn't know its relational rhymes.
-    // So we ask Datamuse what it SOUNDS like, and steal the rhymes from its closest valid cousin!
-    if (combinedRhymes.size === 0) {
+    // If a word yields less than 10 rhymes, Datamuse is struggling.
+    // So we ask Datamuse what it SOUNDS like, and steal the rhymes from its closest valid cousins until the board is full!
+    if (combinedRhymes.size < 10) {
       try {
-        const bridgeRes = await fetch(`https://api.datamuse.com/words?sl=${apiWord}&max=3`);
+        const bridgeRes = await fetch(`https://api.datamuse.com/words?sl=${apiWord}&max=10`);
         const bridgeData = await bridgeRes.json();
         for (let b of bridgeData) {
           const cousin = b.word.toLowerCase();
           if (cousin !== apiWord) {
-             if (strictness === 'exact') {
+             if (isMixedMode) {
+               await fetchDatamuse(cousin, 'rel_rhy');
+               if (combinedRhymes.size < 10) await fetchDatamuse(cousin, 'rel_nry');
+               if (combinedRhymes.size < 10) await fetchDatamuse(cousin, 'sl');
+             } else if (strictness === 'exact') {
                await fetchDatamuse(cousin, 'rel_rhy');
              } else if (strictness === 'close') {
                await fetchDatamuse(cousin, 'rel_rhy');
-               await fetchDatamuse(cousin, 'rel_nry');
+               if (combinedRhymes.size < 10) await fetchDatamuse(cousin, 'rel_nry');
              } else if (strictness === 'slant') {
                await fetchDatamuse(cousin, 'rel_nry');
+             } else if (strictness === 'experimental') {
+               await fetchDatamuse(cousin, 'sl');
              }
-             if (combinedRhymes.size > 0) break;
+             if (combinedRhymes.size >= 10) break;
           }
         }
       } catch(e) {}
@@ -327,7 +341,9 @@ async function updateAnchor(index, word) {
           if (diffA !== diffB) return diffA - diffB;
       }
       
-      if (vocabMode === 'simple') {
+            if (isMixedMode) {
+            return 0.5 - Math.random();
+        } else if (vocabMode === 'simple') {
           return (b.freq || 0) - (a.freq || 0);
       } else if (vocabMode === 'tuff') {
           if (a.isTrap && !b.isTrap) return -1;
@@ -345,16 +361,20 @@ async function updateAnchor(index, word) {
       
       return 0.5 - Math.random(); // shuffle within same-distance tier
   });
-  
-  let stringRhymes = finalRhymes.map(r => r.word);
-
-
-  if (stringRhymes.length === 0) {
-    stringRhymes.push("no-match");
-  }
-  
-  anchors[index].allRhymes = stringRhymes.map(w => ({word: w}));
-  anchors[index].rhymes = anchors[index].allRhymes.slice(0, 10);
+    if (finalRhymes.length === 0) {
+      finalRhymes.push({word: "no-match", syllables: 0});
+    }
+    
+    anchors[index].allRhymes = finalRhymes;
+    anchors[index].offset = 0;
+    
+    let initialRhymes = [];
+    for (let i = 0; i < 10; i++) {
+      if (finalRhymes.length > 0) {
+        initialRhymes.push(finalRhymes[i % finalRhymes.length]);
+      }
+    }
+    anchors[index].rhymes = initialRhymes;
   
   renderBoard();
 }
@@ -390,6 +410,39 @@ let activeBeatIndex = -1;
 let isBeatOn = false;
 
 let vocabMode = 'normal';
+let isMixedMode = false;
+
+window.toggleMixedMode = function() {
+  isMixedMode = !isMixedMode;
+  
+  const mixedBtn = document.getElementById('mode-mixed');
+  const vocabContainer = document.getElementById('vocab-container');
+  const strictSlider = document.getElementById('strictness-slider');
+  const strictLabels = strictSlider.nextElementSibling;
+  
+  if (isMixedMode) {
+    mixedBtn.className = 'btn-primary';
+    vocabContainer.style.opacity = '0.3';
+    vocabContainer.style.pointerEvents = 'none';
+    strictSlider.style.opacity = '0.3';
+    strictSlider.disabled = true;
+    strictLabels.style.opacity = '0.3';
+  } else {
+    mixedBtn.className = 'btn-secondary';
+    vocabContainer.style.opacity = '1';
+    vocabContainer.style.pointerEvents = 'auto';
+    strictSlider.style.opacity = '1';
+    strictSlider.disabled = false;
+    strictLabels.style.opacity = '1';
+  }
+  
+  // Re-run the board to apply the new mixed mode immediately
+  for (let i = 0; i < anchors.length; i++) {
+    if (anchors[i].word && !anchors[i].locked) {
+      updateAnchor(i, anchors[i].word);
+    }
+  }
+};
 
 function setVocabMode(mode) {
   const isDiff = vocabMode !== mode;
@@ -751,8 +804,13 @@ function refreshRhymes() {
   saveState();
   anchors.forEach((anchor, index) => {
     if (!anchor.locked && anchor.allRhymes.length > 0) {
-      let shuffled = [...anchor.allRhymes].sort(() => 0.5 - Math.random());
-      anchor.rhymes = shuffled.slice(0, 10);
+      anchor.offset = (anchor.offset || 0) + 10;
+      
+      let newRhymes = [];
+      for (let i = 0; i < 10; i++) {
+        newRhymes.push(anchor.allRhymes[(anchor.offset + i) % anchor.allRhymes.length]);
+      }
+      anchor.rhymes = newRhymes;
     }
   });
   renderBoard();
