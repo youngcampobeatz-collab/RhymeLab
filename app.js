@@ -29,6 +29,8 @@ function undoRoll() {
 // Init Dictionary
 function initDictionary() {
   let allWords = new Set();
+    const slang = ['tweezy', 'glizzy', 'blicky', 'opps', 'slatt', 'slime', 'draco', 'fasho', 'cap', 'drip', 'yeat', 'carti', 'perc', 'wock', 'zaza', 'choppa', 'finna', 'bet', 'no cap', 'ong'];
+    slang.forEach(w => allWords.add(w));
   
   if (typeof RHYME_FAMILIES !== 'undefined') {
     RHYME_FAMILIES.forEach(fam => {
@@ -139,9 +141,23 @@ function renderBoard(glitchInfo = null) {
        input.value = anchor.word;
     };
     
-    header.appendChild(lock);
-    header.appendChild(input);
-    col.appendChild(header);
+          const favBtn = document.createElement('button');
+      favBtn.className = 'anchor-fav-btn';
+      favBtn.innerHTML = '&#9733;';
+      favBtn.title = 'Add to Vault';
+      favBtn.onclick = (e) => {
+        e.stopPropagation();
+        if (anchor.word && !favorites.includes(anchor.word)) {
+          favorites.push(anchor.word);
+          localStorage.setItem('rhymeLabFavorites', JSON.stringify(favorites));
+          renderFavorites();
+        }
+      };
+      
+      header.appendChild(lock);
+      header.appendChild(input);
+      if (anchor.word) header.appendChild(favBtn);
+      col.appendChild(header);
     
     // Rhymes
     const rhymeList = document.createElement('div');
@@ -207,17 +223,19 @@ async function updateAnchor(index, word) {
   const rawWords = word.trim().split(/[\s-]+/);
   const isMulti = rawWords.length > 1;
   const apiWord = rawWords[rawWords.length - 1].toLowerCase();
-  
-  let anchorSyllables = 0;
-  let applySyllableLock = isSyllableLocked || isMulti;
-  
-  try {
-    const res = await fetch(`https://api.datamuse.com/words?sp=${apiWord}&md=s&max=1`);
-    const data = await res.json();
-    if (data && data.length > 0 && data[0].numSyllables) {
-      anchorSyllables = data[0].numSyllables;
+    let anchorSyllables = 0;
+    let applySyllableLock = isSyllableLocked;
+    
+    // Calculate total syllables of the entire anchor phrase (so 'SHOULDER-BAG' = 3 syllables)
+    for (let w of rawWords) {
+      try {
+        const res = await fetch(`https://api.datamuse.com/words?sp=${w.toLowerCase()}&md=s&max=1`);
+        const data = await res.json();
+        if (data && data.length > 0 && data[0].numSyllables) {
+          anchorSyllables += data[0].numSyllables;
+        }
+      } catch(e) {}
     }
-  } catch(e) {}
 
   async function fetchDatamuse(queryWord, param) {
     let url = `https://api.datamuse.com/words?${param}=${queryWord}&md=f,s&max=40`;
@@ -236,13 +254,17 @@ async function updateAnchor(index, word) {
               if (fTag) freq = parseFloat(fTag.substring(2));
             }
             
-            // Exact Rhymes (rel_rhy) get high scores (250+), they pass automatically.
-            // Slant Rhymes (rel_nry, sl) get low scores (~100), they MUST have freq >= 0.5
-            let isExact = (d.score && d.score >= 250);
-            let isGoodSlant = (d.score && d.score >= 80 && freq >= 0.5);
-            let isTrapDict = dictionary.includes(clean);
-            
-            if (isExact || isGoodSlant || isTrapDict) {
+            let minFreq = 0.5;
+              if (strictness === 'slant') minFreq = 0.1;
+              if (strictness === 'experimental') minFreq = 0.1;
+              
+              let isExact = (d.score && d.score >= 250);
+              let isTrapDict = dictionary.includes(clean);
+              
+              let requiredFreq = isTrapDict ? minFreq : 1.0;
+              let isGoodSlant = (d.score && d.score >= 80 && freq >= requiredFreq);
+              
+              if (isExact || isGoodSlant || isTrapDict) {
               if (!combinedRhymes.has(clean)) {
                 combinedRhymes.set(clean, { word: clean, syllables: d.numSyllables || 0, score: d.score || 0, freq: freq, isTrap: isTrapDict });
               }
@@ -259,63 +281,43 @@ async function updateAnchor(index, word) {
     await fetchDatamuse(apiWord, 'rel_rhy');
     await fetchDatamuse(apiWord, 'rel_nry');
   } else if (strictness === 'slant') {
-    await fetchDatamuse(apiWord, 'rel_rhy');
     await fetchDatamuse(apiWord, 'rel_nry');
-    if (combinedRhymes.size < 15) await fetchDatamuse(apiWord, 'sl');
   } else if (strictness === 'experimental') {
-    await fetchDatamuse(apiWord, 'rel_rhy');
-    await fetchDatamuse(apiWord, 'rel_nry');
     await fetchDatamuse(apiWord, 'sl');
   }
 
   if (combinedRhymes.size < 10) {
-    await fetchDatamuse(apiWord, 'rel_rhy'); 
-    if (combinedRhymes.size < 10) await fetchDatamuse(apiWord, 'rel_nry');
-    if (combinedRhymes.size < 10 && (strictness === 'slant' || strictness === 'experimental')) await fetchDatamuse(apiWord, 'sl');
-  }
+      if (strictness !== 'exact') {
+        if (combinedRhymes.size < 10) await fetchDatamuse(apiWord, 'rel_nry');
+        if (combinedRhymes.size < 10 && (strictness === 'slant' || strictness === 'experimental')) await fetchDatamuse(apiWord, 'sl');
+      }
+    }
+
+    // Intelligent Phonetic Bridge for Slang / Typos
+    // If a word yields ZERO rhymes (like 'DAWG' or 'NIFFTY'), Datamuse doesn't know its relational rhymes.
+    // So we ask Datamuse what it SOUNDS like, and steal the rhymes from its closest valid cousin!
+    if (combinedRhymes.size === 0) {
+      try {
+        const bridgeRes = await fetch(`https://api.datamuse.com/words?sl=${apiWord}&max=3`);
+        const bridgeData = await bridgeRes.json();
+        for (let b of bridgeData) {
+          const cousin = b.word.toLowerCase();
+          if (cousin !== apiWord) {
+             if (strictness === 'exact') {
+               await fetchDatamuse(cousin, 'rel_rhy');
+             } else if (strictness === 'close') {
+               await fetchDatamuse(cousin, 'rel_rhy');
+               await fetchDatamuse(cousin, 'rel_nry');
+             } else if (strictness === 'slant') {
+               await fetchDatamuse(cousin, 'rel_nry');
+             }
+             if (combinedRhymes.size > 0) break;
+          }
+        }
+      } catch(e) {}
+    }
   
   let finalRhymes = Array.from(combinedRhymes.values());
-  const vowelSuffix = getVowelSuffix(apiWord);
-  
-  if (finalRhymes.length < 10) {
-    dictionary.forEach(w => {
-      if (w !== apiWord && w !== word.toLowerCase() && w.endsWith(vowelSuffix)) {
-        if (!combinedRhymes.has(w)) {
-           finalRhymes.push({ word: w, syllables: 0, score: 0, freq: 0, isTrap: true });
-           combinedRhymes.set(w, true);
-        }
-      }
-    });
-  }
-  
-  if (finalRhymes.length < 10) {
-    let url = `https://api.datamuse.com/words?sp=*${vowelSuffix}&md=f,s&max=50`;
-    try {
-      const res = await fetch(url);
-      const data = await res.json();
-      if (data && data.length > 0) {
-        data.forEach(d => {
-          const clean = d.word.toLowerCase();
-          if (/^[a-z][a-z\-\']{2,}$/.test(clean) && clean !== word.toLowerCase() && clean !== apiWord) {
-            if (applySyllableLock && anchorSyllables > 0 && d.numSyllables !== anchorSyllables) return;
-            
-            let freq = 0;
-            if (d.tags) {
-              const fTag = d.tags.find(t => t.startsWith('f:'));
-              if (fTag) freq = parseFloat(fTag.substring(2));
-            }
-            if ((d.score && d.score >= 200 && freq >= 0.5) || dictionary.includes(clean)) {
-              if (!combinedRhymes.has(clean)) {
-                finalRhymes.push({ word: clean, syllables: d.numSyllables || 0, score: d.score || 0, freq: freq, isTrap: dictionary.includes(clean) });
-                combinedRhymes.set(clean, true);
-              }
-            }
-          }
-        });
-      }
-    } catch (err) {}
-  }
-  
   // Intelligent Syllable-Cadence Sorting!
   // Ranks words that perfectly match the anchor's syllable count to the top of the list
   finalRhymes.sort((a, b) => {
@@ -330,8 +332,14 @@ async function updateAnchor(index, word) {
       } else if (vocabMode === 'tuff') {
           if (a.isTrap && !b.isTrap) return -1;
           if (!a.isTrap && b.isTrap) return 1;
-          let scoreA = (a.isTrap ? 100 : 0) - (a.freq || 0) + (a.word.length * 2);
-          let scoreB = (b.isTrap ? 100 : 0) - (b.freq || 0) + (b.word.length * 2);
+          
+          // Remove length bonus so it favors shorter/punchier words, but penalize massive syllable differences
+          let sylDiffA = (applySyllableLock && anchorSyllables > 0) ? 0 : Math.abs((a.numSyllables||0) - anchorSyllables);
+          let sylDiffB = (applySyllableLock && anchorSyllables > 0) ? 0 : Math.abs((b.numSyllables||0) - anchorSyllables);
+          
+          let scoreA = (a.isTrap ? 100 : 0) + (a.freq || 0) - (sylDiffA * 10);
+          let scoreB = (b.isTrap ? 100 : 0) + (b.freq || 0) - (sylDiffB * 10);
+
           return scoreB - scoreA;
       }
       
@@ -339,41 +347,7 @@ async function updateAnchor(index, word) {
   });
   
   let stringRhymes = finalRhymes.map(r => r.word);
-  
-  // Multis Protocol
-  if (isMulti && stringRhymes.length > 0) {
-    const firstWord = rawWords.slice(0, -1).join(' ');
-    let prefixRhymes = [];
-    try {
-      const res1 = await fetch(`https://api.datamuse.com/words?rel_rhy=${firstWord}&md=f&max=20`);
-      const data1 = await res1.json();
-      
-      const res2 = await fetch(`https://api.datamuse.com/words?rel_nry=${firstWord}&md=f&max=20`);
-      const data2 = await res2.json();
-      
-      let allPrefixes = [...data1, ...data2];
-      
-      allPrefixes = allPrefixes.filter(d => {
-          let freq = 0;
-          if (d.tags) {
-              const fTag = d.tags.find(t => t.startsWith('f:'));
-              if (fTag) freq = parseFloat(fTag.substring(2));
-          }
-          return freq >= 0.5 || dictionary.includes(d.word.toLowerCase());
-      });
-      
-      allPrefixes.sort((a, b) => (b.score || 0) - (a.score || 0));
-      prefixRhymes = allPrefixes.map(d => d.word.toLowerCase());
-      prefixRhymes = [...new Set(prefixRhymes)];
-    } catch(e) {}
-    
-    if (prefixRhymes.length === 0) prefixRhymes = [firstWord];
-    
-    stringRhymes = stringRhymes.map((w, i) => {
-      let pref = prefixRhymes[i % prefixRhymes.length];
-      return pref + ' ' + w;
-    });
-  }
+
 
   if (stringRhymes.length === 0) {
     stringRhymes.push("no-match");
@@ -387,15 +361,14 @@ async function updateAnchor(index, word) {
 
 function randomizeBoard() {
   saveState();
+  fillQueue();
   anchors.forEach((anchor, index) => {
     if (!anchor.locked) {
-      const validDict = dictionary.filter(w => w.length >= 3);
-      if (validDict.length > 0) {
-        const r = Math.floor(Math.random() * validDict.length);
-        updateAnchor(index, validDict[r]);
-      }
+      const nextWord = anchorQueue.shift();
+      if (nextWord) updateAnchor(index, nextWord);
     }
   });
+  fillQueue();
 }
 
 function setAnchorCount(count) {
@@ -705,10 +678,65 @@ function placeWordInUnlockedAnchor(word) {
 
 // Strictness logic
 const strictValues = ['exact', 'close', 'slant', 'experimental'];
-document.getElementById('strictness-slider').addEventListener('input', (e) => {
-  strictness = strictValues[e.target.value];
+function updateStrictnessLabel(val) {
+  document.getElementById('strictness-label').innerText = strictValues[val].toUpperCase();
+}
+async function onStrictnessChange(val) {
+  strictness = strictValues[val];
   document.getElementById('strictness-label').innerText = strictness.toUpperCase();
-});
+  for (let i = 0; i < anchors.length; i++) {
+    if (anchors[i].word && !anchors[i].locked) {
+      await updateAnchor(i, anchors[i].word);
+    }
+  }
+}
+
+
+let anchorQueue = [];
+
+function fillQueue() {
+  const validDict = dictionary.filter(w => w.length >= 3);
+  if (validDict.length === 0) return;
+  while (anchorQueue.length < 7) {
+    let pick = validDict[Math.floor(Math.random() * validDict.length)];
+    if (vocabMode === 'simple') {
+      let attempts = 0;
+      while (pick.length > 5 && attempts < 10) {
+        pick = validDict[Math.floor(Math.random() * validDict.length)];
+        attempts++;
+      }
+    }
+    anchorQueue.push(pick);
+  }
+  renderQueue();
+}
+
+function renderQueue() {
+  const list = document.getElementById('anchor-queue-list');
+  if (!list) return;
+  list.innerHTML = '';
+  anchorQueue.forEach((word, index) => {
+    const item = document.createElement('div');
+    item.className = 'queue-item';
+    item.innerHTML = `${word.toUpperCase()} <span class="remove-btn" onclick="removeFromQueue(${index})">&times;</span>`;
+    list.appendChild(item);
+  });
+}
+
+function removeFromQueue(index) {
+  anchorQueue.splice(index, 1);
+  fillQueue();
+}
+
+function addCustomQueue() {
+  const input = document.getElementById('custom-queue-input');
+  const val = input.value.trim();
+  if (val) {
+    anchorQueue.unshift(val);
+    input.value = '';
+    renderQueue();
+  }
+}
 
 // Initial Boot
 initDictionary();
