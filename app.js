@@ -193,72 +193,34 @@ function getVowelSuffix(word) {
   return word.length >= 3 ? word.slice(-3).toLowerCase() : word.toLowerCase();
 }
 
+let isSyllableLocked = false;
+function toggleSyllableLock() {
+  isSyllableLocked = document.getElementById('syllable-lock').checked;
+}
+
 async function updateAnchor(index, word) {
   anchors[index].word = word.toUpperCase();
   anchors[index].rhymes = ["...", "...", "...", "...", "...", "...", "...", "...", "...", "..."];
   renderBoard();
   
-  let combinedRhymes = new Set();
-  const apiWord = word.split(/[\s-]+/).pop().toLowerCase();
+  let combinedRhymes = new Map();
+  const rawWords = word.trim().split(/[\s-]+/);
+  const isMulti = rawWords.length > 1;
+  const apiWord = rawWords[rawWords.length - 1].toLowerCase();
   
-  async function fetchDatamuse(queryWord, param) {
-    let url = `https://api.datamuse.com/words?${param}=${queryWord}&max=40`;
-    try {
-      const res = await fetch(url);
-      const data = await res.json();
-      if (data && data.length > 0) {
-        data.forEach(d => {
-          const clean = d.word.toLowerCase();
-          // Must start with a letter, be 3+ chars, and not match the anchor word
-          if (/^[a-z][a-z\-\']{2,}$/.test(clean) && clean !== word.toLowerCase() && clean !== apiWord) {
-            // Bumped to 250 to kill "lep", "dep", "moone", "sterne"
-            if ((d.score && d.score >= 250) || dictionary.includes(clean)) {
-              combinedRhymes.add(clean);
-            }
-          }
-        });
-      }
-    } catch (err) {
-      console.error(err);
+  let anchorSyllables = 0;
+  let applySyllableLock = isSyllableLocked || isMulti;
+  
+  try {
+    const res = await fetch(`https://api.datamuse.com/words?sp=${apiWord}&md=s&max=1`);
+    const data = await res.json();
+    if (data && data.length > 0 && data[0].numSyllables) {
+      anchorSyllables = data[0].numSyllables;
     }
-  }
+  } catch(e) {}
 
-  // RAP-OPTIMIZED STRICTNESS WATERFALL
-  if (strictness === 'exact') {
-    await fetchDatamuse(apiWord, 'rel_rhy'); // Perfect rhymes
-  } else if (strictness === 'close') {
-    await fetchDatamuse(apiWord, 'rel_rhy');
-    if (combinedRhymes.size < 15) await fetchDatamuse(apiWord, 'rel_nry'); // Blend in slant rhymes
-  } else if (strictness === 'slant') {
-    await fetchDatamuse(apiWord, 'rel_nry'); // Pure slant rhymes (assonance)
-    if (combinedRhymes.size < 15) await fetchDatamuse(apiWord, 'sl'); // Sounds like
-  } else if (strictness === 'experimental') {
-    await fetchDatamuse(apiWord, 'rel_nry'); // Approximate rhymes
-    await fetchDatamuse(apiWord, 'sl');      // Sounds like
-  }
-
-  // GUARANTEED FALLBACK: If we still don't have enough, progressively widen the net
-  if (combinedRhymes.size < 10) {
-    await fetchDatamuse(apiWord, 'rel_rhy'); 
-    if (combinedRhymes.size < 10) await fetchDatamuse(apiWord, 'rel_nry');
-    if (combinedRhymes.size < 10) await fetchDatamuse(apiWord, 'sl');
-  }
-  
-  let finalRhymes = Array.from(combinedRhymes);
-  const vowelSuffix = getVowelSuffix(apiWord);
-  
-  // 1. LOCAL DICTIONARY VOWEL FALLBACK (Assonance)
-  if (finalRhymes.length < 10) {
-    dictionary.forEach(w => {
-      if (w !== apiWord && w !== word.toLowerCase() && w.endsWith(vowelSuffix) && !finalRhymes.includes(w)) {
-        finalRhymes.push(w);
-      }
-    });
-  }
-  
-  // 2. DATAMUSE VOWEL SUFFIX FALLBACK (The Ultimate Safety Net)
-  if (finalRhymes.length < 10) {
-    let url = `https://api.datamuse.com/words?sp=*${vowelSuffix}&md=f&max=50`;
+  async function fetchDatamuse(queryWord, param) {
+    let url = `https://api.datamuse.com/words?${param}=${queryWord}&md=f,s&max=40`;
     try {
       const res = await fetch(url);
       const data = await res.json();
@@ -266,18 +228,84 @@ async function updateAnchor(index, word) {
         data.forEach(d => {
           const clean = d.word.toLowerCase();
           if (/^[a-z][a-z\-\']{2,}$/.test(clean) && clean !== word.toLowerCase() && clean !== apiWord) {
+            if (applySyllableLock && anchorSyllables > 0 && d.numSyllables !== anchorSyllables) return;
             
-            // Extract frequency to filter out obscure foreign loanwords
             let freq = 0;
             if (d.tags) {
               const fTag = d.tags.find(t => t.startsWith('f:'));
               if (fTag) freq = parseFloat(fTag.substring(2));
             }
             
-            // Require score >= 250 AND freq >= 0.5 (unless it's in our trap dict)
-            if ((d.score && d.score >= 250 && freq >= 0.5) || dictionary.includes(clean)) {
-              if (!finalRhymes.includes(clean)) {
-                finalRhymes.push(clean);
+            // Exact Rhymes (rel_rhy) get high scores (250+), they pass automatically.
+            // Slant Rhymes (rel_nry, sl) get low scores (~100), they MUST have freq >= 0.5
+            let isExact = (d.score && d.score >= 250);
+            let isGoodSlant = (d.score && d.score >= 80 && freq >= 0.5);
+            let isTrapDict = dictionary.includes(clean);
+            
+            if (isExact || isGoodSlant || isTrapDict) {
+              if (!combinedRhymes.has(clean)) {
+                combinedRhymes.set(clean, { word: clean, syllables: d.numSyllables || 0, score: d.score || 0 });
+              }
+            }
+          }
+        });
+      }
+    } catch (err) {}
+  }
+
+  if (strictness === 'exact') {
+    await fetchDatamuse(apiWord, 'rel_rhy');
+  } else if (strictness === 'close') {
+    await fetchDatamuse(apiWord, 'rel_rhy');
+    await fetchDatamuse(apiWord, 'rel_nry'); // ALWAYS fetch slant to catch polysyllabic assonance
+  } else if (strictness === 'slant') {
+    await fetchDatamuse(apiWord, 'rel_nry');
+    if (combinedRhymes.size < 15) await fetchDatamuse(apiWord, 'sl');
+  } else if (strictness === 'experimental') {
+    await fetchDatamuse(apiWord, 'rel_nry');
+    await fetchDatamuse(apiWord, 'sl');
+  }
+
+  if (combinedRhymes.size < 10) {
+    await fetchDatamuse(apiWord, 'rel_rhy'); 
+    if (combinedRhymes.size < 10) await fetchDatamuse(apiWord, 'rel_nry');
+    if (combinedRhymes.size < 10) await fetchDatamuse(apiWord, 'sl');
+  }
+  
+  let finalRhymes = Array.from(combinedRhymes.values());
+  const vowelSuffix = getVowelSuffix(apiWord);
+  
+  if (finalRhymes.length < 10) {
+    dictionary.forEach(w => {
+      if (w !== apiWord && w !== word.toLowerCase() && w.endsWith(vowelSuffix)) {
+        if (!combinedRhymes.has(w)) {
+           finalRhymes.push({ word: w, syllables: 0, score: 0 });
+           combinedRhymes.set(w, true);
+        }
+      }
+    });
+  }
+  
+  if (finalRhymes.length < 10) {
+    let url = `https://api.datamuse.com/words?sp=*${vowelSuffix}&md=f,s&max=50`;
+    try {
+      const res = await fetch(url);
+      const data = await res.json();
+      if (data && data.length > 0) {
+        data.forEach(d => {
+          const clean = d.word.toLowerCase();
+          if (/^[a-z][a-z\-\']{2,}$/.test(clean) && clean !== word.toLowerCase() && clean !== apiWord) {
+            if (applySyllableLock && anchorSyllables > 0 && d.numSyllables !== anchorSyllables) return;
+            
+            let freq = 0;
+            if (d.tags) {
+              const fTag = d.tags.find(t => t.startsWith('f:'));
+              if (fTag) freq = parseFloat(fTag.substring(2));
+            }
+            if ((d.score && d.score >= 200 && freq >= 0.5) || dictionary.includes(clean)) {
+              if (!combinedRhymes.has(clean)) {
+                finalRhymes.push({ word: clean, syllables: d.numSyllables || 0, score: d.score || 0 });
+                combinedRhymes.set(clean, true);
               }
             }
           }
@@ -286,15 +314,59 @@ async function updateAnchor(index, word) {
     } catch (err) {}
   }
   
-  // If we truly have nothing, push a placeholder so the UI doesn't crash.
-  if (finalRhymes.length === 0) {
-    finalRhymes.push("no-match");
+  // Intelligent Syllable-Cadence Sorting!
+  // Ranks words that perfectly match the anchor's syllable count to the top of the list
+  finalRhymes.sort((a, b) => {
+      if (anchorSyllables > 0 && a.syllables > 0 && b.syllables > 0) {
+          let diffA = Math.abs(a.syllables - anchorSyllables);
+          let diffB = Math.abs(b.syllables - anchorSyllables);
+          if (diffA !== diffB) return diffA - diffB;
+      }
+      return 0.5 - Math.random(); // shuffle within same-distance tier
+  });
+  
+  let stringRhymes = finalRhymes.map(r => r.word);
+  
+  // Multis Protocol
+  if (isMulti && stringRhymes.length > 0) {
+    const firstWord = rawWords.slice(0, -1).join(' ');
+    let prefixRhymes = [];
+    try {
+      const res1 = await fetch(`https://api.datamuse.com/words?rel_rhy=${firstWord}&md=f&max=20`);
+      const data1 = await res1.json();
+      
+      const res2 = await fetch(`https://api.datamuse.com/words?rel_nry=${firstWord}&md=f&max=20`);
+      const data2 = await res2.json();
+      
+      let allPrefixes = [...data1, ...data2];
+      
+      allPrefixes = allPrefixes.filter(d => {
+          let freq = 0;
+          if (d.tags) {
+              const fTag = d.tags.find(t => t.startsWith('f:'));
+              if (fTag) freq = parseFloat(fTag.substring(2));
+          }
+          return freq >= 0.5 || dictionary.includes(d.word.toLowerCase());
+      });
+      
+      allPrefixes.sort((a, b) => (b.score || 0) - (a.score || 0));
+      prefixRhymes = allPrefixes.map(d => d.word.toLowerCase());
+      prefixRhymes = [...new Set(prefixRhymes)];
+    } catch(e) {}
+    
+    if (prefixRhymes.length === 0) prefixRhymes = [firstWord];
+    
+    stringRhymes = stringRhymes.map((w, i) => {
+      let pref = prefixRhymes[i % prefixRhymes.length];
+      return pref + ' ' + w;
+    });
+  }
+
+  if (stringRhymes.length === 0) {
+    stringRhymes.push("no-match");
   }
   
-  // We no longer inject duplicates! Displaying 6 flawless rhymes is better than 10 where 4 are fake duplicates.
-  
-  finalRhymes.sort(() => 0.5 - Math.random());
-  anchors[index].allRhymes = finalRhymes.map(w => ({word: w}));
+  anchors[index].allRhymes = stringRhymes.map(w => ({word: w}));
   anchors[index].rhymes = anchors[index].allRhymes.slice(0, 10);
   
   renderBoard();

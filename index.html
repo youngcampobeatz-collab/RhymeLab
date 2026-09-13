@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Rhyme Lab | Gothica Future Tech</title>
+  <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -12,6 +13,7 @@
   <aside class="sidebar">
     <div class="sidebar-header">
       <h1>Rhyme Lab</h1>
+      <button class="sidebar-close-btn" onclick="document.querySelector('.sidebar').classList.remove('open')">&times;</button>
     </div>
     
     <div class="sidebar-section">
@@ -24,6 +26,10 @@
           <span>SLANT</span>
           <span>EXP</span>
         </div>
+      </div>
+      <div style="margin-top: 15px; display: flex; align-items: center; gap: 10px;">
+        <input type="checkbox" id="syllable-lock" onchange="toggleSyllableLock()" style="accent-color: var(--accent); width: 15px; height: 15px;">
+        <label for="syllable-lock" style="font-size: 0.8rem; color: var(--accent); font-family: var(--font-glitch); letter-spacing: 1px; cursor: pointer;">SYLLABLE LOCK</label>
       </div>
     </div>
     
@@ -61,6 +67,7 @@
     
     <div class="topbar">
       <div class="roll-controls">
+        <button class="mobile-menu-btn" onclick="document.querySelector('.sidebar').classList.add('open')">☰ MENU</button>
         <button class="roll-btn" onclick="randomizeBoard()">ROLL</button>
         <button class="roll-btn" onclick="undoRoll()" style="font-size: 1rem; padding: 10px 20px; box-shadow: 2px 2px 0 var(--accent);">UNDO</button>
         <button class="roll-btn" onclick="refreshRhymes()" style="font-size: 1rem; padding: 10px 20px; box-shadow: 2px 2px 0 var(--accent);">SHUFFLE</button>
@@ -68,6 +75,7 @@
           COLOR
           <input type="color" value="#d9042b" style="opacity: 0; width: 0; height: 0; border: none; padding: 0; position: absolute;" oninput="changeThemeColor(this.value)">
         </label>
+        <button class="roll-btn" onclick="document.getElementById('rhyme-pad').classList.toggle('open')" style="font-size: 1rem; padding: 10px 20px; box-shadow: 2px 2px 0 var(--accent);">PAD</button>
         <select id="anchor-count" class="mode-select" onchange="setAnchorCount(this.value)">
           <option value="2">2 Anchors</option>
           <option value="3">3 Anchors</option>
@@ -94,6 +102,15 @@
     
   </main>
 
+  <!-- RHYME PAD -->
+  <aside id="rhyme-pad" class="rhyme-pad">
+    <div class="pad-header">
+      <h2>RHYME PAD</h2>
+      <button class="pad-close" onclick="document.getElementById('rhyme-pad').classList.remove('open')">&times;</button>
+    </div>
+    <div class="pad-body" contenteditable="true" spellcheck="false" placeholder="Drag rhymes here or type...&#10;&#10;e.g.&#10;I got the WEALTH&#10;And the STEALTH"></div>
+  </aside>
+
   <!-- DICTIONARY MODAL -->
   <div id="dict-modal" class="modal-overlay">
     <div class="modal">
@@ -112,5 +129,12 @@
 
   <script src="families.js"></script>
   <script src="app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js').catch(err => console.error('SW init failed:', err));
+      });
+    }
+  </script>
 </body>
 </html>
